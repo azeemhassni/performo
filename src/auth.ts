@@ -63,3 +63,54 @@ export async function resolveAuth(): Promise<AuthResult | null> {
 
   return null;
 }
+
+/**
+ * Build a human-readable summary of the current auth state.
+ *
+ * Used by the `--auth` flag to help users verify their setup.
+ */
+export async function getAuthStatus(): Promise<string> {
+  const lines: string[] = [];
+
+  const cliStatus = await getClaudeCLIStatus();
+  if (cliStatus?.loggedIn) {
+    lines.push(
+      `Claude CLI: authenticated as ${cliStatus.email} (${cliStatus.subscriptionType}) [ok]`
+    );
+  } else if (cliStatus) {
+    lines.push("Claude CLI: installed but not authenticated");
+  } else {
+    lines.push("Claude CLI: not installed or not available");
+  }
+
+  const envKey = process.env.ANTHROPIC_API_KEY;
+  if (envKey) {
+    const masked = envKey.slice(0, 10) + "..." + envKey.slice(-4);
+    lines.push(`API Key (ANTHROPIC_API_KEY): ${masked} [ok]`);
+  } else {
+    lines.push("API Key (ANTHROPIC_API_KEY): not set");
+  }
+
+  const hasAuth = lines.some((l) => l.includes("[ok]"));
+  if (!hasAuth) {
+    lines.push("");
+    lines.push("No authentication found. Set up one of:");
+    lines.push("  1. Run: claude login   (uses your Claude Pro/Max subscription)");
+    lines.push("  2. Set: export ANTHROPIC_API_KEY=sk-ant-...");
+  }
+
+  return lines.join("\n");
+}
+
+/** Message shown when no authentication is configured. */
+export const AUTH_SETUP_MESSAGE = `
+No authentication found. performo needs access to Claude AI.
+
+Option 1: Claude Pro/Max account (recommended)
+  Run: claude login
+  This uses your existing Claude subscription, no API key needed.
+
+Option 2: API key
+  Set: export ANTHROPIC_API_KEY=sk-ant-...
+  Get a key at: https://console.anthropic.com/settings/keys
+`;
