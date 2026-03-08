@@ -437,4 +437,58 @@ function extractMeta($: CheerioAPI): PageAnalysis["meta"] {
   };
 }
 
-// TODO: wire up analyzePage orchestrator
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Perform static analysis on a fetched page and its assets.
+ *
+ * Extracts performance-relevant signals from the HTML structure, linked
+ * resources, and response headers. Does not execute JavaScript or measure
+ * runtime metrics.
+ */
+export function analyzePage(
+  page: FetchedPage,
+  fetchedAssets: FetchedAsset[]
+): PageAnalysis {
+  const $ = cheerio.load(page.html);
+  const assetMap = new Map(fetchedAssets.map((a) => [a.url, a]));
+
+  const scripts = analyzeScripts($, page.url, assetMap);
+  const stylesheets = analyzeStylesheets($, page.url, assetMap);
+  const images = analyzeImages($, page.url);
+  const fonts = analyzeFonts($, page.url);
+  const thirdPartyScripts = findThirdPartyScripts($, page.url, assetMap);
+  const head = analyzeHead($);
+  const inline = countInlineResources($);
+  const meta = extractMeta($);
+
+  return {
+    url: page.url,
+    timing: page.timing,
+    headers: {
+      cacheControl: page.headers["cache-control"] || null,
+      contentEncoding: page.headers["content-encoding"] || null,
+      server: page.headers["server"] || null,
+      xPoweredBy: page.headers["x-powered-by"] || null,
+      strictTransportSecurity: page.headers["strict-transport-security"] || null,
+      contentSecurityPolicy: page.headers["content-security-policy"] || null,
+    },
+    resources: {
+      scripts,
+      stylesheets,
+      images,
+      fonts,
+      totalScriptSize: scripts.reduce((sum, s) => sum + (s.size || 0), 0),
+      totalStylesheetSize: stylesheets.reduce((sum, s) => sum + (s.size || 0), 0),
+      totalImageCount: images.length,
+      totalFontCount: fonts.length,
+    },
+    head,
+    thirdPartyScripts,
+    inlineStyles: inline.styles,
+    inlineScripts: inline.scripts,
+    meta,
+  };
+}
