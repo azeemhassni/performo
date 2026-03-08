@@ -213,4 +213,89 @@ export function extractAssetUrls(
   return assets;
 }
 
-// TODO: implement analysis functions
+// ---------------------------------------------------------------------------
+// Analysis: individual concerns
+// ---------------------------------------------------------------------------
+
+function analyzeScripts(
+  $: CheerioAPI,
+  pageUrl: string,
+  assetMap: Map<string, FetchedAsset>
+): ResourceInfo[] {
+  const scripts: ResourceInfo[] = [];
+
+  $("script[src]").each((_, el) => {
+    const src = $(el).attr("src");
+    if (!src) return;
+    const resolved = resolveUrl(pageUrl, src);
+    const asset = assetMap.get(resolved);
+    const isAsync = $(el).attr("async") !== undefined;
+    const isDefer = $(el).attr("defer") !== undefined;
+
+    scripts.push({
+      url: resolved,
+      type: "script",
+      size: asset?.size ?? null,
+      sizeFormatted: formatBytes(asset?.size ?? null),
+      renderBlocking: !isAsync && !isDefer,
+      attributes: {
+        ...(isAsync ? { async: "true" } : {}),
+        ...(isDefer ? { defer: "true" } : {}),
+        ...($(el).attr("type") ? { type: $(el).attr("type")! } : {}),
+      },
+    });
+  });
+
+  return scripts;
+}
+
+function analyzeStylesheets(
+  $: CheerioAPI,
+  pageUrl: string,
+  assetMap: Map<string, FetchedAsset>
+): ResourceInfo[] {
+  const stylesheets: ResourceInfo[] = [];
+
+  $('link[rel="stylesheet"]').each((_, el) => {
+    const href = $(el).attr("href");
+    if (!href) return;
+    const resolved = resolveUrl(pageUrl, href);
+    const asset = assetMap.get(resolved);
+    const media = $(el).attr("media");
+
+    stylesheets.push({
+      url: resolved,
+      type: "stylesheet",
+      size: asset?.size ?? null,
+      sizeFormatted: formatBytes(asset?.size ?? null),
+      renderBlocking: !media || media === "all",
+      attributes: media ? { media } : {},
+    });
+  });
+
+  return stylesheets;
+}
+
+function analyzeImages($: CheerioAPI, pageUrl: string): ImageInfo[] {
+  const images: ImageInfo[] = [];
+
+  $("img").each((_, el) => {
+    const src = $(el).attr("src") || $(el).attr("data-src") || "";
+    images.push({
+      src: src ? resolveUrl(pageUrl, src) : "",
+      hasWidth: $(el).attr("width") !== undefined,
+      hasHeight: $(el).attr("height") !== undefined,
+      hasLoading: $(el).attr("loading") !== undefined,
+      loadingValue: $(el).attr("loading") || null,
+      hasFetchPriority: $(el).attr("fetchpriority") !== undefined,
+      fetchPriorityValue: $(el).attr("fetchpriority") || null,
+      alt: $(el).attr("alt") ?? null,
+      format: getImageFormat(src),
+    });
+  });
+
+  return images;
+}
+
+// TODO: implement font, head, third-party, inline, and meta analysis
+// TODO: wire up analyzePage orchestrator
