@@ -297,5 +297,144 @@ function analyzeImages($: CheerioAPI, pageUrl: string): ImageInfo[] {
   return images;
 }
 
-// TODO: implement font, head, third-party, inline, and meta analysis
+function analyzeFonts($: CheerioAPI, pageUrl: string): FontInfo[] {
+  const preconnectDomains = new Set<string>();
+  $('link[rel="preconnect"]').each((_, el) => {
+    const href = $(el).attr("href");
+    if (href) preconnectDomains.add(getDomain(href));
+  });
+
+  const fonts: FontInfo[] = [];
+  $('link[rel="preload"][as="font"]').each((_, el) => {
+    const href = $(el).attr("href");
+    if (!href) return;
+    const resolved = resolveUrl(pageUrl, href);
+    fonts.push({
+      url: resolved,
+      hasPreconnect: preconnectDomains.has(getDomain(resolved)),
+      hasPreload: true,
+      fontDisplay: null,
+    });
+  });
+
+  // Attempt to read font-display values from inline @font-face rules.
+  const inlineStyleContent = $("style")
+    .map((_, el) => $(el).html())
+    .get()
+    .join("\n");
+  const fontDisplayMatches = inlineStyleContent.match(/font-display\s*:\s*(\w+)/g);
+  if (fontDisplayMatches && fonts.length > 0) {
+    const values = fontDisplayMatches.map((m) => m.split(":")[1].trim());
+    fonts.forEach((f, i) => {
+      f.fontDisplay = values[i] || values[0] || null;
+    });
+  }
+
+  return fonts;
+}
+
+function findThirdPartyScripts(
+  $: CheerioAPI,
+  pageUrl: string,
+  assetMap: Map<string, FetchedAsset>
+): ThirdPartyScript[] {
+  const results: ThirdPartyScript[] = [];
+
+  $("script[src]").each((_, el) => {
+    const src = $(el).attr("src");
+    if (!src) return;
+    const resolved = resolveUrl(pageUrl, src);
+    if (!isThirdParty(pageUrl, resolved)) return;
+
+    const asset = assetMap.get(resolved);
+    const inHead = $(el).parents("head").length > 0;
+
+    results.push({
+      url: resolved,
+      domain: getDomain(resolved),
+      size: asset?.size ?? null,
+      isAsync: $(el).attr("async") !== undefined,
+      isDefer: $(el).attr("defer") !== undefined,
+      position: inHead ? "head" : "body",
+    });
+  });
+
+  return results;
+}
+
+function analyzeHead($: CheerioAPI): HeadAnalysis {
+  const elements: HeadAnalysis["elements"] = [];
+  let position = 0;
+
+  $("head")
+    .children()
+    .each((_, el) => {
+      const node = el as unknown as { tagName: string; attribs?: Record<string, string> };
+      const attrs: Record<string, string> = {};
+      for (const [key, value] of Object.entries(node.attribs || {})) {
+        attrs[key] = String(value);
+      }
+      elements.push({ tag: node.tagName, attributes: attrs, position: position++ });
+    });
+
+  const charsetEl = elements.find(
+    (e) => e.tag === "meta" && (e.attributes.charset || e.attributes.Charset)
+  );
+  const titleEl = elements.find((e) => e.tag === "title");
+  const viewportEl = elements.find(
+    (e) => e.tag === "meta" && e.attributes.name?.toLowerCase() === "viewport"
+  );
+
+  const issues: string[] = [];
+  if (!charsetEl) {
+    issues.push("No charset meta tag found in <head>");
+  } else if (charsetEl.position > 0) {
+    issues.push("charset declaration is not the first element in <head>");
+  }
+  if (!viewportEl) {
+    issues.push("No viewport meta tag found");
+  }
+
+  return {
+    elements,
+    hasCharsetEarly: charsetEl ? charsetEl.position <= 1 : false,
+    hasViewport: !!viewportEl,
+    titlePosition: titleEl ? titleEl.position : null,
+    issues,
+  };
+}
+
+function countInlineResources($: CheerioAPI): {
+  styles: { count: number; totalLength: number };
+  scripts: { count: number; totalLength: number };
+} {
+  let styleCount = 0;
+  let styleLength = 0;
+  $("style").each((_, el) => {
+    styleCount++;
+    styleLength += ($(el).html() || "").length;
+  });
+
+  let scriptCount = 0;
+  let scriptLength = 0;
+  $("script:not([src])").each((_, el) => {
+    scriptCount++;
+    scriptLength += ($(el).html() || "").length;
+  });
+
+  return {
+    styles: { count: styleCount, totalLength: styleLength },
+    scripts: { count: scriptCount, totalLength: scriptLength },
+  };
+}
+
+function extractMeta($: CheerioAPI): PageAnalysis["meta"] {
+  return {
+    title: $("title").text() || null,
+    description: $('meta[name="description"]').attr("content") || null,
+    hasCanonical: $('link[rel="canonical"]').length > 0,
+    hasOpenGraph: $('meta[property^="og:"]').length > 0,
+  };
+}
+
 // TODO: wire up analyzePage orchestrator
