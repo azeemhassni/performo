@@ -45,6 +45,87 @@ export interface AITransport {
   send(prompt: string): Promise<string>;
 }
 
+/** Transport that pipes a prompt through the `claude` CLI via stdin. */
+export class CLITransport implements AITransport {
+  async send(prompt: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const child = spawn("claude", [
+        "-p", "-",
+        "--output-format", "text",
+        "--model", MODEL,
+      ], {
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      child.stdout.on("data", (data: Buffer) => {
+        stdout += data.toString();
+      });
+      child.stderr.on("data", (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      child.on("close", (code) => {
+        if (code === 0) {
+          resolve(stdout);
+        } else {
+          reject(new Error(`claude CLI exited with code ${code}: ${stderr || "(no output)"}`));
+        }
+      });
+
+      child.on("error", (err) => {
+        reject(new Error(`Failed to spawn claude CLI: ${err.message}`));
+      });
+
+      child.stdin.write(prompt);
+      child.stdin.end();
+    });
+  }
+}
+
+/** Transport that calls the Anthropic SDK directly with an API key. */
+export class SDKTransport implements AITransport {
+  private client: Anthropic;
+
+  constructor(apiKey: string) {
+    this.client = new Anthropic({ apiKey });
+  }
+
+  async send(prompt: string): Promise<string> {
+    const response = await this.client.messages.create({
+      model: MODEL,
+      max_tokens: 4096,
+      messages: [{ role: "user", content: prompt }],
+    });
+
+    const textBlock = response.content.find((block) => block.type === "text");
+    if (!textBlock || textBlock.type !== "text") {
+      throw new Error("Anthropic API returned no text content");
+    }
+
+    return textBlock.text;
+  }
+}
+
+/**
+ * Create the appropriate transport for the given auth method.
+ *
+ * Throws if API key auth is selected but no key is provided.
+ */
+export function createTransport(auth: AuthResult): AITransport {
+  if (auth.method === "claude_cli") {
+    return new CLITransport();
+  }
+
+  if (!auth.apiKey) {
+    throw new Error("API key authentication selected but no key was provided");
+  }
+
+  return new SDKTransport(auth.apiKey);
+}
+
 // ---------------------------------------------------------------------------
 // Prompt construction
 // ---------------------------------------------------------------------------
@@ -92,3 +173,5 @@ Respond with ONLY valid JSON in this exact format:
   "summary": "string - 1-2 sentence overall assessment"
 }`;
 }
+
+// TODO: add response parsing and analyzeWithAI
