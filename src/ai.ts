@@ -174,4 +174,56 @@ Respond with ONLY valid JSON in this exact format:
 }`;
 }
 
-// TODO: add response parsing and analyzeWithAI
+// ---------------------------------------------------------------------------
+// Response parsing
+// ---------------------------------------------------------------------------
+
+/**
+ * Parse the raw AI response text into a structured report.
+ *
+ * Handles responses that may be wrapped in markdown code fences.
+ * Throws a descriptive error if the response is not valid JSON.
+ */
+export function parseAIResponse(text: string): AIReport {
+  let jsonStr = text.trim();
+  const fenceMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fenceMatch) {
+    jsonStr = fenceMatch[1].trim();
+  }
+
+  let report: AIReport;
+  try {
+    report = JSON.parse(jsonStr);
+  } catch {
+    throw new Error(
+      "Failed to parse AI response as JSON. The model may have returned non-JSON output.\n" +
+      `Response preview: ${jsonStr.slice(0, 300)}`
+    );
+  }
+
+  if (!Array.isArray(report.issues)) {
+    throw new Error("Invalid AI response: expected an 'issues' array");
+  }
+
+  return report;
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Send page analysis data to Claude and return a structured performance report.
+ *
+ * Accepts an `AITransport` so callers can swap the underlying API mechanism
+ * (CLI, SDK, or a test double) without changing the analysis logic.
+ */
+export async function analyzeWithAI(
+  analysis: PageAnalysis,
+  transport: AITransport,
+  options: { focus?: string } = {}
+): Promise<AIReport> {
+  const prompt = buildPrompt(analysis, options.focus);
+  const responseText = await transport.send(prompt);
+  return parseAIResponse(responseText);
+}
