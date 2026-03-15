@@ -63,8 +63,65 @@ function validateFocusOption(focus: string | undefined): void {
 // ---------------------------------------------------------------------------
 
 async function runAudit(targetUrl: string, options: CliOptions): Promise<AIReport> {
-  // TODO: implement full audit pipeline
-  throw new Error("Not implemented yet");
+  // Authenticate
+  const auth = await resolveAuth();
+  if (!auth) {
+    console.error(chalk.red("Authentication required."));
+    console.error(AUTH_SETUP_MESSAGE);
+    process.exit(1);
+  }
+
+  // Fetch page
+  const fetchSpinner = ora("Fetching page...").start();
+  let page;
+  try {
+    page = await fetchPage(targetUrl);
+    fetchSpinner.succeed(
+      `Fetched ${targetUrl} (${page.statusCode}, ${page.timing.ttfbMs}ms TTFB)`
+    );
+  } catch (err: unknown) {
+    fetchSpinner.fail("Failed to fetch page");
+    console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+    process.exit(1);
+  }
+
+  // Inspect linked assets
+  let fetchedAssets: Awaited<ReturnType<typeof fetchAssets>> = [];
+  if (options.fast) {
+    console.log(chalk.gray("  Skipping asset inspection (--fast mode)"));
+  } else {
+    const assetUrls = extractAssetUrls(page.html, targetUrl);
+    if (assetUrls.length > 0) {
+      const assetSpinner = ora(`Inspecting ${assetUrls.length} assets...`).start();
+      try {
+        fetchedAssets = await fetchAssets(assetUrls);
+        assetSpinner.succeed(`Inspected ${fetchedAssets.length} assets`);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        assetSpinner.warn(`Some assets could not be inspected: ${message}`);
+      }
+    }
+  }
+
+  // Analyze page structure
+  const analyzeSpinner = ora("Analyzing page structure...").start();
+  const analysis = analyzePage(page, fetchedAssets);
+  analyzeSpinner.succeed("Page structure analyzed");
+
+  // AI analysis
+  const aiSpinner = ora("Claude is analyzing performance...").start();
+  try {
+    const transport = createTransport(auth);
+    const report = await analyzeWithAI(analysis, transport, {
+      focus: options.focus,
+    });
+    aiSpinner.succeed(`Found ${report.issues.length} performance issues`);
+    return report;
+  } catch (err: unknown) {
+    aiSpinner.fail("AI analysis failed");
+    console.error(chalk.red(err instanceof Error ? err.message : String(err)));
+    process.exit(1);
+  }
 }
 
 // ---------------------------------------------------------------------------
