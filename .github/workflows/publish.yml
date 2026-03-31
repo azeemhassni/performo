@@ -29,7 +29,8 @@ jobs:
         run: |
           LOCAL=$(node -p "require('./package.json').version")
           echo "version=$LOCAL" >> "$GITHUB_OUTPUT"
-          if npm view performo@"$LOCAL" version 2>/dev/null; then
+          PUBLISHED=$(npm view performo@"$LOCAL" version 2>/dev/null || echo "")
+          if [ -n "$PUBLISHED" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
