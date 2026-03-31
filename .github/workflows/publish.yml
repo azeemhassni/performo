@@ -11,9 +11,13 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Skip runs triggered by the version bump commit to avoid infinite loops
+    if: "!startsWith(github.event.head_commit.message, 'chore: bump version')"
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-node@v4
         with:
@@ -24,30 +28,39 @@ jobs:
       - run: npm run build
       - run: npm test
 
-      - name: Check if version is already published
-        id: version-check
+      - name: Determine version bump type
+        id: bump
         run: |
-          LOCAL=$(node -p "require('./package.json').version")
-          echo "version=$LOCAL" >> "$GITHUB_OUTPUT"
-          PUBLISHED=$(npm view performo@"$LOCAL" version 2>/dev/null || echo "")
-          if [ -n "$PUBLISHED" ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
+          MSG=$(git log -1 --pretty=%B)
+          if echo "$MSG" | grep -qi "BREAKING CHANGE"; then
+            echo "type=major" >> "$GITHUB_OUTPUT"
+          elif echo "$MSG" | grep -qi "^feat"; then
+            echo "type=minor" >> "$GITHUB_OUTPUT"
           else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "type=patch" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Bump version
+        id: version
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          NEW_VERSION=$(npm version ${{ steps.bump.outputs.type }} --no-git-tag-version)
+          echo "version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          git add package.json package-lock.json
+          git commit -m "chore: bump version to $NEW_VERSION"
+          git push
+
       - name: Publish to npm
-        if: steps.version-check.outputs.exists == 'false'
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub release
-        if: steps.version-check.outputs.exists == 'false'
         run: |
-          VERSION="${{ steps.version-check.outputs.version }}"
-          gh release create "v$VERSION" \
-            --title "v$VERSION" \
+          VERSION="${{ steps.version.outputs.version }}"
+          gh release create "$VERSION" \
+            --title "$VERSION" \
             --generate-notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
