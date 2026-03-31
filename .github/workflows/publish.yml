@@ -52,6 +52,9 @@ jobs:
           git commit -m "chore: bump version to $NEW_VERSION"
           git push
 
+      - name: Clear auth token for OIDC
+        run: echo "NODE_AUTH_TOKEN=" >> $GITHUB_ENV
+
       - name: Publish to npm
         run: npm publish --access public --provenance
 
