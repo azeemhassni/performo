@@ -4,6 +4,9 @@
   "description": "Web performance auditor powered by Claude AI",
   "type": "module",
   "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
   "bin": {
     "performo": "dist/index.js"
   },
